@@ -29,7 +29,7 @@ python interest_calculator.py
 ```
 
 ## LPR数据
-- 程序启动时自动从 chinamoney.com.cn 获取最新LPR数据
+- 程序启动时自动从 Tushare 获取最新LPR数据
 - 缓存到本地 lpr_data.json
 - 联网失败时读取缓存，缓存也不存在则使用内置默认值(3.45%)
 
