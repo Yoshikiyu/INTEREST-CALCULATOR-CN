@@ -3,9 +3,9 @@
 分段计息，支持LPR浮动利率
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from tkcalendar import DateEntry
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import json
 import os
@@ -113,9 +113,11 @@ BUILTIN_LPR_DATA = [
 
 # LPR数据文件
 LPR_DATA_FILE = "lpr_data.json"
+CONFIG_FILE = "config.json"
 MONEY_PLACES = Decimal("0.01")
 RATE_PLACES = Decimal("0.0001")
 YEAR_DAYS = Decimal("360")
+LPR_FETCH_ERROR = ""
 
 
 def to_decimal(value, default=None):
@@ -150,17 +152,59 @@ def decimal_to_excel_number(value):
     return float(to_decimal(value, Decimal("0")).quantize(MONEY_PLACES, rounding=ROUND_HALF_UP))
 
 
-def get_cache_lpr_path():
-    """优先把LPR缓存放在用户目录，避免安装目录不可写。"""
+def get_app_data_dir():
+    """优先使用用户目录，避免安装目录不可写。"""
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         cache_dir = os.path.join(local_app_data, "利息计算器")
         try:
             os.makedirs(cache_dir, exist_ok=True)
-            return os.path.join(cache_dir, LPR_DATA_FILE)
+            return cache_dir
         except OSError:
             pass
-    return LPR_DATA_FILE
+    return "."
+
+
+def get_cache_lpr_path():
+    return os.path.join(get_app_data_dir(), LPR_DATA_FILE)
+
+
+def get_config_path():
+    return os.path.join(get_app_data_dir(), CONFIG_FILE)
+
+
+def load_config():
+    path = get_config_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_config(config):
+    try:
+        with open(get_config_path(), 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"保存配置失败: {e}")
+        return False
+
+
+def get_tushare_token():
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if token:
+        return token
+    return str(load_config().get("tushare_token", "")).strip()
+
+
+def save_tushare_token(token):
+    config = load_config()
+    config["tushare_token"] = token.strip()
+    return save_config(config)
 
 
 def days_between(d1, d2):
@@ -252,13 +296,55 @@ def get_lpr_rate_for_date(target_date, lpr_data):
     return applicable_lpr
 
 
-def fetch_lpr_data():
+def fetch_chinamoney_lpr_data(start_date=date(2019, 8, 1), end_date=None):
+    """
+    从中国货币网公开接口获取LPR历史数据。
+    该接口一次最多查询一年，因此按时间段拆分请求。
+    """
+    if end_date is None:
+        end_date = date.today()
+
+    records_by_date = {}
+    current_start = start_date
+    while current_start <= end_date:
+        current_end = min(current_start + timedelta(days=360), end_date)
+        url = (
+            "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-currency/LprHis"
+            f"?lang=CN&strStartDate={current_start.strftime('%Y-%m-%d')}"
+            f"&strEndDate={current_end.strftime('%Y-%m-%d')}"
+        )
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode('utf-8'))
+
+        message = result.get('data', {}).get('message')
+        if message:
+            raise RuntimeError(f"中国货币网返回: {message}")
+
+        for item in result.get('records', []):
+            record_date = item.get('showDateCN')
+            lpr_val = item.get('1Y')
+            if record_date and lpr_val:
+                records_by_date[record_date] = {
+                    'date': record_date,
+                    'lpr': float(lpr_val)
+                }
+
+        current_start = current_end + timedelta(days=1)
+
+    lpr_list = sorted(records_by_date.values(), key=lambda x: x['date'])
+    if not lpr_list:
+        raise RuntimeError("中国货币网未返回LPR记录")
+    return lpr_list
+
+
+def fetch_tushare_lpr_data(token=None):
     """
     获取LPR历史数据
     使用Tushare Pro API: shibor_lpr
     """
     try:
-        token = os.environ.get("TUSHARE_TOKEN", "").strip()
+        token = (token or get_tushare_token()).strip()
         if not token:
             return None
         url = 'https://api.tushare.pro/'
@@ -277,6 +363,8 @@ def fetch_lpr_data():
 
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode('utf-8'))
+            if result.get('code') not in (None, 0):
+                raise RuntimeError(result.get('msg') or f"Tushare错误代码: {result.get('code')}")
             items = result.get('data', {}).get('items', [])
 
             lpr_list = []
@@ -312,6 +400,36 @@ def load_lpr_from_cache():
                 return json.load(f)
         except Exception:
             pass
+    return None
+
+
+def fetch_lpr_data(token=None):
+    """优先使用中国货币网公开接口，失败后再尝试Tushare。"""
+    global LPR_FETCH_ERROR
+    errors = []
+
+    try:
+        data = fetch_chinamoney_lpr_data()
+        LPR_FETCH_ERROR = ""
+        print(f"中国货币网获取LPR成功: {len(data)}条记录")
+        return data
+    except Exception as e:
+        errors.append(f"中国货币网: {e}")
+
+    token = (token or get_tushare_token()).strip()
+    if token:
+        try:
+            data = fetch_tushare_lpr_data(token)
+            if data:
+                LPR_FETCH_ERROR = ""
+                return data
+        except Exception as e:
+            errors.append(f"Tushare: {e}")
+    else:
+        errors.append("Tushare: 未设置Token")
+
+    LPR_FETCH_ERROR = "；".join(errors)
+    print(f"LPR获取失败: {LPR_FETCH_ERROR}")
     return None
 
 
@@ -387,7 +505,23 @@ class InterestCalculatorApp:
                 latest_lpr = self.lpr_data[-1]
                 lpr_info = f"当前LPR(1年期): {latest_lpr.get('lpr', 3.45)}% ({latest_lpr.get('date', '')}) [缓存]"
                 self.lpr_info_label.config(text=lpr_info)
-            messagebox.showwarning("警告", "无法获取最新LPR数据，已使用本地缓存数据")
+            detail = f"\n\n失败原因：{LPR_FETCH_ERROR}" if LPR_FETCH_ERROR else ""
+            messagebox.showwarning("警告", f"无法获取最新LPR数据，已继续使用本地缓存数据。{detail}")
+
+    def prompt_tushare_token(self):
+        """提示用户设置Tushare Token，避免打包版依赖环境变量。"""
+        token = simpledialog.askstring(
+            "设置 Tushare Token",
+            "通常无需设置Token，程序会优先使用中国货币网公开数据。\n"
+            "如果公开数据源暂时不可用，可在这里填写 Tushare Token 作为备用：",
+            parent=self.root
+        )
+        if token and token.strip():
+            token = token.strip()
+            if save_tushare_token(token):
+                return token
+            messagebox.showerror("错误", "Token 保存失败，请检查用户目录写入权限。")
+        return None
 
     def create_widgets(self):
         """创建所有界面组件"""
@@ -459,6 +593,27 @@ class InterestCalculatorApp:
             self.lpr_info_label.pack(side=tk.LEFT, padx=(20, 10))
 
         ttk.Button(row2, text="更新LPR", command=self.update_lpr_data).pack(side=tk.LEFT)
+        ttk.Button(row2, text="设置Token", command=self.configure_tushare_token).pack(side=tk.LEFT, padx=(8, 0))
+
+    def configure_tushare_token(self):
+        """手动设置或更新Tushare Token。"""
+        current_token = get_tushare_token()
+        token = simpledialog.askstring(
+            "设置 Tushare Token",
+            "请输入 Tushare Token：",
+            initialvalue=current_token,
+            parent=self.root
+        )
+        if token is None:
+            return
+        token = token.strip()
+        if not token:
+            messagebox.showwarning("提示", "Token 不能为空。如暂不更新，可直接使用内置或缓存LPR数据。")
+            return
+        if save_tushare_token(token):
+            messagebox.showinfo("成功", "Tushare Token 已保存。现在可以点击“更新LPR”。")
+        else:
+            messagebox.showerror("错误", "Token 保存失败，请检查用户目录写入权限。")
 
     def create_repayment_frame(self, parent):
         """还款明细表区域"""

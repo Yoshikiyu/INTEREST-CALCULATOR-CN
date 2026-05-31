@@ -30,7 +30,8 @@ python interest_calculator.py
 ```
 
 ## LPR数据
-- 如需联网更新LPR数据，请设置环境变量 TUSHARE_TOKEN
+- 点击“更新LPR”会优先从中国货币网公开接口获取数据，不需要 Token
+- 如公开数据源不可用，可在软件内点击“设置Token”保存 Tushare Token 作为备用，也可设置环境变量 TUSHARE_TOKEN
 - 程序启动时会优先读取本地缓存，手动点击“更新LPR”时尝试从 Tushare 获取最新LPR数据
 - 缓存到用户本地应用数据目录下的 lpr_data.json
 - 联网失败时读取缓存，缓存也不存在则使用内置默认值(3.45%)
