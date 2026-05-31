@@ -2,7 +2,7 @@
 ; 生成Windows安装包
 
 #define MyAppName "利息计算器"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "利息计算器"
 #define MyAppURL ""
 #define MyAppExeName "利息计算器.exe"
