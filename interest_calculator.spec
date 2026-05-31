@@ -6,9 +6,7 @@ a = Analysis(
     ['interest_calculator.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('lpr_data.json', '.'),
-    ],
+    datas=[],
     hiddenimports=['tkcalendar', 'PIL._tkinter_finder'],
     hookspath=[],
     hooksconfig={},

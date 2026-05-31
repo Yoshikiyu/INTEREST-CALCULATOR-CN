@@ -8,6 +8,7 @@
 ## 依赖
 - tkinter（Python内置）
 - tkcalendar（pip install tkcalendar）
+- openpyxl（pip install openpyxl，用于导出Excel）
 - urllib（Python内置）
 - json（Python内置）
 
@@ -29,8 +30,9 @@ python interest_calculator.py
 ```
 
 ## LPR数据
-- 程序启动时自动从 Tushare 获取最新LPR数据
-- 缓存到本地 lpr_data.json
+- 如需联网更新LPR数据，请设置环境变量 TUSHARE_TOKEN
+- 程序启动时会优先读取本地缓存，手动点击“更新LPR”时尝试从 Tushare 获取最新LPR数据
+- 缓存到用户本地应用数据目录下的 lpr_data.json
 - 联网失败时读取缓存，缓存也不存在则使用内置默认值(3.45%)
 
 ## 注意事项
