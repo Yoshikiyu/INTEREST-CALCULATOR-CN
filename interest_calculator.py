@@ -268,9 +268,6 @@ class InterestCalculatorApp:
         self.use_lpr_var = tk.BooleanVar()
         self.lpr_multiplier_var = tk.StringVar(value="4")
 
-        # 还款记录列表
-        self.repayment_records = []
-
         # 创建界面
         self.create_widgets()
 
@@ -387,25 +384,27 @@ class InterestCalculatorApp:
 
     def create_repayment_frame(self, parent):
         """还款明细表区域"""
-        frame = ttk.LabelFrame(parent, text="还款明细表", padding="10")
+        frame = ttk.LabelFrame(parent, text="资金流水明细", padding="10")
         frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # 创建表格
-        columns = ('序号', '还款日期', '还款金额', '应还利息', '实还利息', '当期欠息', '当期剩余本金')
+        columns = ('序号', '日期', '类型', '金额', '应还利息', '实还利息', '当期欠息', '当期剩余本金')
         self.repayment_tree = ttk.Treeview(frame, columns=columns, show='headings', height=8)
 
         # 设置列宽
         self.repayment_tree.heading('序号', text='序号')
-        self.repayment_tree.heading('还款日期', text='还款日期')
-        self.repayment_tree.heading('还款金额', text='还款金额')
+        self.repayment_tree.heading('日期', text='日期')
+        self.repayment_tree.heading('类型', text='类型')
+        self.repayment_tree.heading('金额', text='金额')
         self.repayment_tree.heading('应还利息', text='应还利息')
         self.repayment_tree.heading('实还利息', text='实还利息')
         self.repayment_tree.heading('当期欠息', text='当期欠息')
         self.repayment_tree.heading('当期剩余本金', text='当期剩余本金')
 
-        self.repayment_tree.column('序号', width=50, anchor='center')
-        self.repayment_tree.column('还款日期', width=120, anchor='center')
-        self.repayment_tree.column('还款金额', width=100, anchor='e')
+        self.repayment_tree.column('序号', width=45, anchor='center')
+        self.repayment_tree.column('日期', width=110, anchor='center')
+        self.repayment_tree.column('类型', width=50, anchor='center')
+        self.repayment_tree.column('金额', width=100, anchor='e')
         self.repayment_tree.column('应还利息', width=100, anchor='e')
         self.repayment_tree.column('实还利息', width=100, anchor='e')
         self.repayment_tree.column('当期欠息', width=100, anchor='e')
@@ -426,7 +425,8 @@ class InterestCalculatorApp:
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Button(frame, text="添加一行", command=self.add_repayment_row).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(frame, text="添加还款", command=self.add_repayment_row).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(frame, text="添加借款", command=self.add_borrowing_row).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(frame, text="修改", command=self.edit_repayment_row).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(frame, text="删除", command=self.delete_repayment_row).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(frame, text="清空", command=self.clear_repayments).pack(side=tk.LEFT, padx=(0, 10))
@@ -491,6 +491,7 @@ class InterestCalculatorApp:
                 row_data = {
                     'num': len(self.repayment_rows) + 1,
                     'date': repayment_date,
+                    'type': 'repay',
                     'amount': amount,
                     'interest_due': 0,
                     'interest_paid': 0,
@@ -523,8 +524,77 @@ class InterestCalculatorApp:
         dialog.bind('<Return>', lambda e: on_confirm())
         dialog.bind('<Escape>', lambda e: on_cancel())
 
+    def add_borrowing_row(self):
+        """添加一笔借款记录 - 弹出输入对话框"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("添加借款记录")
+        dialog.geometry("300x150")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # 居中
+        dialog.geometry("+{}+{}".format(
+            self.root.winfo_x() + self.root.winfo_width() // 2 - 150,
+            self.root.winfo_y() + self.root.winfo_height() // 2 - 75
+        ))
+
+        # 日期
+        ttk.Label(dialog, text="借款日期:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        date_entry = DateEntry(dialog, width=12, dateformat='%Y-%m-%d')
+        date_entry.grid(row=0, column=1, padx=10, pady=10)
+
+        # 金额
+        ttk.Label(dialog, text="借款金额:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
+        amount_var = tk.StringVar()
+        amount_entry = ttk.Entry(dialog, textvariable=amount_var, width=15)
+        amount_entry.grid(row=1, column=1, padx=10, pady=10)
+
+        def on_confirm():
+            try:
+                borrow_date = date_entry.get_date()
+                amount = float(amount_var.get()) if amount_var.get() else 0
+
+                if amount <= 0:
+                    messagebox.showerror("输入错误", "借款金额必须大于0", parent=dialog)
+                    return
+
+                row_data = {
+                    'num': len(self.repayment_rows) + 1,
+                    'date': borrow_date,
+                    'type': 'borrow',
+                    'amount': amount,
+                    'interest_due': 0,
+                    'interest_paid': 0,
+                    'current_arrears': 0,
+                    'remaining_principal': 0
+                }
+                self.repayment_rows.append(row_data)
+
+                # 重新排序并更新序号
+                self.repayment_rows.sort(key=lambda x: x['date'])
+                for i, row in enumerate(self.repayment_rows):
+                    row['num'] = i + 1
+
+                # 重新计算所有行
+                self.recalculate_all()
+                dialog.destroy()
+            except ValueError:
+                messagebox.showerror("输入错误", "请输入有效的金额", parent=dialog)
+
+        def on_cancel():
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="确定", command=on_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
+
+        amount_entry.focus()
+        dialog.bind('<Return>', lambda e: on_confirm())
+        dialog.bind('<Escape>', lambda e: on_cancel())
+
     def edit_repayment_row(self):
-        """修改选中的还款记录"""
+        """修改选中的记录（借款或还款）"""
         selection = self.repayment_tree.selection()
         if not selection:
             messagebox.showwarning("警告", "请先选择要修改的行")
@@ -546,9 +616,12 @@ class InterestCalculatorApp:
             messagebox.showerror("错误", "未找到对应的记录")
             return
 
+        is_borrow = row_data.get('type') == 'borrow'
+        type_label = "借款" if is_borrow else "还款"
+
         # 弹出修改对话框
         dialog = tk.Toplevel(self.root)
-        dialog.title("修改还款记录")
+        dialog.title(f"修改{type_label}记录")
         dialog.geometry("300x150")
         dialog.transient(self.root)
         dialog.grab_set()
@@ -560,28 +633,31 @@ class InterestCalculatorApp:
         ))
 
         # 日期
-        ttk.Label(dialog, text="还款日期:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(dialog, text=f"{type_label}日期:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
         date_entry = DateEntry(dialog, width=12, dateformat='%Y-%m-%d')
         date_entry.set_date(row_data['date'])
         date_entry.grid(row=0, column=1, padx=10, pady=10)
 
         # 金额
-        ttk.Label(dialog, text="还款金额:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
+        ttk.Label(dialog, text=f"{type_label}金额:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
         amount_var = tk.StringVar(value=str(row_data['amount']))
         amount_entry = ttk.Entry(dialog, textvariable=amount_var, width=15)
         amount_entry.grid(row=1, column=1, padx=10, pady=10)
 
         def on_confirm():
             try:
-                repayment_date = date_entry.get_date()
+                new_date = date_entry.get_date()
                 amount = float(amount_var.get()) if amount_var.get() else 0
 
-                if amount < 0:
+                if is_borrow and amount <= 0:
+                    messagebox.showerror("输入错误", "借款金额必须大于0", parent=dialog)
+                    return
+                if not is_borrow and amount < 0:
                     messagebox.showerror("输入错误", "还款金额不能为负数", parent=dialog)
                     return
 
                 # 更新数据
-                row_data['date'] = repayment_date
+                row_data['date'] = new_date
                 row_data['amount'] = amount
 
                 # 重新排序并更新序号
@@ -609,7 +685,7 @@ class InterestCalculatorApp:
         dialog.bind('<Escape>', lambda e: on_cancel())
 
     def delete_repayment_row(self):
-        """删除选中的还款记录"""
+        """删除选中的记录"""
         selection = self.repayment_tree.selection()
         if not selection:
             messagebox.showwarning("警告", "请先选择要删除的行")
@@ -656,26 +732,33 @@ class InterestCalculatorApp:
         brought_forward_arrears = 0
 
         for row in self.repayment_rows:
-            # 计算本期应还利息
+            # 计算本期应还利息（按当前剩余本金、上期日期到本期日期）
             interest_due = self.calculate_segment_interest(
                 prev_date, row['date'], prev_remaining, user_rate, use_lpr, multiplier
             )
             total_interest_due = interest_due + brought_forward_arrears
 
-            # 先息后本
-            interest_paid = min(row['amount'], total_interest_due)
-            principal_paid = row['amount'] - interest_paid
-            current_arrears = total_interest_due - interest_paid
-            remaining_principal = prev_remaining - principal_paid
+            if row.get('type') == 'borrow':
+                # 借款：利息全部挂账，本金增加
+                row['interest_due'] = interest_due
+                row['interest_paid'] = 0
+                row['current_arrears'] = total_interest_due
+                row['remaining_principal'] = prev_remaining + row['amount']
+            else:
+                # 还款：先息后本
+                interest_paid = min(row['amount'], total_interest_due)
+                principal_paid = row['amount'] - interest_paid
+                current_arrears = total_interest_due - interest_paid
+                remaining_principal = prev_remaining - principal_paid
 
-            row['interest_due'] = interest_due
-            row['interest_paid'] = interest_paid
-            row['current_arrears'] = current_arrears
-            row['remaining_principal'] = remaining_principal
+                row['interest_due'] = interest_due
+                row['interest_paid'] = interest_paid
+                row['current_arrears'] = current_arrears
+                row['remaining_principal'] = remaining_principal
 
             prev_date = row['date']
-            prev_remaining = remaining_principal
-            brought_forward_arrears = current_arrears
+            prev_remaining = row['remaining_principal']
+            brought_forward_arrears = row['current_arrears']
 
         self.refresh_treeview()
         self.update_summary()
@@ -688,15 +771,22 @@ class InterestCalculatorApp:
 
         # 重新插入所有行
         for row in self.repayment_rows:
-            self.repayment_tree.insert('', 'end', values=(
+            type_text = "借款" if row.get('type') == 'borrow' else "还款"
+            values = (
                 row['num'],
                 row['date'].strftime('%Y-%m-%d') if row['date'] else '',
+                type_text,
                 f"{row['amount']:.2f}" if row['amount'] else '',
                 f"{row['interest_due']:.2f}" if row['interest_due'] else '0.00',
                 f"{row['interest_paid']:.2f}" if row['interest_paid'] else '0.00',
                 f"{row['current_arrears']:.2f}" if row['current_arrears'] else '0.00',
                 f"{row['remaining_principal']:.2f}" if row['remaining_principal'] else '0.00'
-            ))
+            )
+            item = self.repayment_tree.insert('', 'end', values=values)
+            # 借款行用蓝色标记
+            if row.get('type') == 'borrow':
+                self.repayment_tree.tag_configure('borrow', foreground='blue')
+                self.repayment_tree.item(item, tags=('borrow',))
 
         # 更新汇总显示
         self.update_summary()
@@ -709,33 +799,19 @@ class InterestCalculatorApp:
             self.total_arrears_label.config(text="0.00")
             return
 
-        total_principal_paid = 0
-        total_interest_due = 0
-        total_interest_paid = 0
-
-        for row in self.repayment_rows:
-            try:
-                principal = float(self.principal_var.get())
-            except ValueError:
-                principal = 0
-            total_principal_paid += row['amount'] - row['interest_paid']
-            total_interest_due += row['interest_due'] + (row['current_arrears'] - (row['interest_due'] - row['interest_paid']))
-            total_interest_paid += row['interest_paid']
-
-        remaining_principal = principal - total_principal_paid
-        arrears_interest = sum(row['current_arrears'] for row in self.repayment_rows)
+        last_row = self.repayment_rows[-1]
+        remaining_principal = last_row['remaining_principal']
+        arrears_interest = last_row['current_arrears']
         total_arrears = remaining_principal + arrears_interest
 
         self.remaining_principal_label.config(text=f"{remaining_principal:.2f}")
         self.arrears_interest_label.config(text=f"{arrears_interest:.2f}")
         self.total_arrears_label.config(text=f"{total_arrears:.2f}")
-        """更新treeview中的一行（已弃用，改用refresh_treeview）"""
-        pass
 
     def export_to_excel(self):
         """导出计算结果到Excel"""
         if not self.repayment_rows:
-            messagebox.showwarning("警告", "没有可导出的还款记录")
+            messagebox.showwarning("警告", "没有可导出的记录")
             return
 
         # 获取保存路径
@@ -779,8 +855,8 @@ class InterestCalculatorApp:
             ws['G2'] = '倍数'
             ws['H2'] = float(self.lpr_multiplier_var.get()) if self.lpr_multiplier_var.get() else 4
 
-            # 还款明细表标题行
-            headers = ['序号', '还款日期', '还款金额', '应还利息', '实还利息', '当期欠息', '当期剩余本金']
+            # 明细表标题行
+            headers = ['序号', '日期', '类型', '金额', '应还利息', '实还利息', '当期欠息', '当期剩余本金']
             header_row = 4
             for col, header in enumerate(headers, start=1):
                 cell = ws.cell(row=header_row, column=col, value=header)
@@ -791,44 +867,49 @@ class InterestCalculatorApp:
 
             # 数据行
             for row_idx, row_data in enumerate(self.repayment_rows, start=header_row + 1):
+                type_text = "借款" if row_data.get('type') == 'borrow' else "还款"
+
                 ws.cell(row=row_idx, column=1, value=row_data['num']).border = thin_border
                 ws.cell(row=row_idx, column=1).alignment = center_align
                 ws.cell(row=row_idx, column=2, value=row_data['date'].strftime('%Y-%m-%d')).border = thin_border
                 ws.cell(row=row_idx, column=2).alignment = center_align
-                ws.cell(row=row_idx, column=3, value=row_data['amount']).border = thin_border
-                ws.cell(row=row_idx, column=3).alignment = right_align
-                ws.cell(row=row_idx, column=3).number_format = '0.00'
-                ws.cell(row=row_idx, column=4, value=row_data['interest_due']).border = thin_border
+                ws.cell(row=row_idx, column=3, value=type_text).border = thin_border
+                ws.cell(row=row_idx, column=3).alignment = center_align
+                ws.cell(row=row_idx, column=4, value=row_data['amount']).border = thin_border
                 ws.cell(row=row_idx, column=4).alignment = right_align
                 ws.cell(row=row_idx, column=4).number_format = '0.00'
-                ws.cell(row=row_idx, column=5, value=row_data['interest_paid']).border = thin_border
+                ws.cell(row=row_idx, column=5, value=row_data['interest_due']).border = thin_border
                 ws.cell(row=row_idx, column=5).alignment = right_align
                 ws.cell(row=row_idx, column=5).number_format = '0.00'
-                ws.cell(row=row_idx, column=6, value=row_data['current_arrears']).border = thin_border
+                ws.cell(row=row_idx, column=6, value=row_data['interest_paid']).border = thin_border
                 ws.cell(row=row_idx, column=6).alignment = right_align
                 ws.cell(row=row_idx, column=6).number_format = '0.00'
-                ws.cell(row=row_idx, column=7, value=row_data['remaining_principal']).border = thin_border
+                ws.cell(row=row_idx, column=7, value=row_data['current_arrears']).border = thin_border
                 ws.cell(row=row_idx, column=7).alignment = right_align
                 ws.cell(row=row_idx, column=7).number_format = '0.00'
+                ws.cell(row=row_idx, column=8, value=row_data['remaining_principal']).border = thin_border
+                ws.cell(row=row_idx, column=8).alignment = right_align
+                ws.cell(row=row_idx, column=8).number_format = '0.00'
 
             # 汇总行
             summary_row = header_row + len(self.repayment_rows) + 1
             ws.cell(row=summary_row, column=1, value='汇总').font = header_font
-            ws.cell(row=summary_row, column=3, value=float(self.remaining_principal_label.cget("text"))).font = header_font
-            ws.cell(row=summary_row, column=3).number_format = '0.00'
-            ws.cell(row=summary_row, column=6, value=float(self.arrears_interest_label.cget("text"))).font = header_font
-            ws.cell(row=summary_row, column=6).number_format = '0.00'
-            ws.cell(row=summary_row, column=7, value=float(self.total_arrears_label.cget("text"))).font = header_font
+            ws.cell(row=summary_row, column=4, value=float(self.remaining_principal_label.cget("text"))).font = header_font
+            ws.cell(row=summary_row, column=4).number_format = '0.00'
+            ws.cell(row=summary_row, column=7, value=float(self.arrears_interest_label.cget("text"))).font = header_font
             ws.cell(row=summary_row, column=7).number_format = '0.00'
+            ws.cell(row=summary_row, column=8, value=float(self.total_arrears_label.cget("text"))).font = header_font
+            ws.cell(row=summary_row, column=8).number_format = '0.00'
 
             # 设置列宽
             ws.column_dimensions['A'].width = 8
             ws.column_dimensions['B'].width = 12
-            ws.column_dimensions['C'].width = 12
+            ws.column_dimensions['C'].width = 8
             ws.column_dimensions['D'].width = 12
             ws.column_dimensions['E'].width = 12
             ws.column_dimensions['F'].width = 12
-            ws.column_dimensions['G'].width = 15
+            ws.column_dimensions['G'].width = 12
+            ws.column_dimensions['H'].width = 15
 
             wb.save(file_path)
             messagebox.showinfo("成功", f"已导出到:\n{file_path}")
@@ -836,7 +917,7 @@ class InterestCalculatorApp:
             messagebox.showerror("错误", f"导出失败:\n{str(e)}")
 
     def clear_repayments(self):
-        """清空所有还款记录"""
+        """清空所有记录"""
         for item in self.repayment_tree.get_children():
             self.repayment_tree.delete(item)
         self.repayment_rows = []
@@ -878,25 +959,25 @@ class InterestCalculatorApp:
                 messagebox.showerror("输入错误", "请输入有效的倍数")
                 return False
 
-        # 检查还款记录
-        valid_repayments = []
+        # 检查事件记录
+        valid_events = []
         for row in self.repayment_rows:
             if row['date'] and row['amount'] > 0:
-                valid_repayments.append(row)
+                valid_events.append(row)
 
-        if not valid_repayments:
-            messagebox.showerror("输入错误", "请至少添加一笔还款记录")
+        if not valid_events:
+            messagebox.showerror("输入错误", "请至少添加一笔借款或还款记录")
             return False
 
         # 按日期排序
-        valid_repayments.sort(key=lambda x: x['date'])
+        valid_events.sort(key=lambda x: x['date'])
 
         return True
 
     def auto_calculate_row(self, current_row):
         """
-        自动计算单行数据（添加还款记录后立即计算）
-        先息后本：当期利息 > 当期欠息（上期未还利息） > 实还利息 > 实还本金
+        自动计算单行数据（添加记录后立即计算）
+        支持借款（本金增加）和还款（先息后本）
         """
         # 获取借款基本信息
         try:
@@ -918,9 +999,7 @@ class InterestCalculatorApp:
         # 确定起始日期和起始本金
         if previous_row:
             prev_date = previous_row['date']
-            # 上期剩余本金
             prev_remaining = previous_row['remaining_principal']
-            # 上期欠息（应结转到本期）
             brought_forward_arrears = previous_row['current_arrears']
         else:
             prev_date = start_date
@@ -931,23 +1010,25 @@ class InterestCalculatorApp:
         interest_due = self.calculate_segment_interest(
             prev_date, current_row['date'], prev_remaining, user_rate, use_lpr, multiplier
         )
-        # 加上期结转欠息
         total_interest_due = interest_due + brought_forward_arrears
 
-        # 先息后本：先还利息
-        interest_paid = min(current_row['amount'], total_interest_due)
-        # 剩余还本金
-        principal_paid = current_row['amount'] - interest_paid
-        # 本期欠息
-        current_arrears = total_interest_due - interest_paid
-        # 剩余本金
-        remaining_principal = prev_remaining - principal_paid
+        if current_row.get('type') == 'borrow':
+            # 借款：利息全部挂账，本金增加
+            current_row['interest_due'] = interest_due
+            current_row['interest_paid'] = 0
+            current_row['current_arrears'] = total_interest_due
+            current_row['remaining_principal'] = prev_remaining + current_row['amount']
+        else:
+            # 还款：先息后本
+            interest_paid = min(current_row['amount'], total_interest_due)
+            principal_paid = current_row['amount'] - interest_paid
+            current_arrears = total_interest_due - interest_paid
+            remaining_principal = prev_remaining - principal_paid
 
-        # 更新当前行
-        current_row['interest_due'] = interest_due
-        current_row['interest_paid'] = interest_paid
-        current_row['current_arrears'] = current_arrears
-        current_row['remaining_principal'] = remaining_principal
+            current_row['interest_due'] = interest_due
+            current_row['interest_paid'] = interest_paid
+            current_row['current_arrears'] = current_arrears
+            current_row['remaining_principal'] = remaining_principal
 
     def calculate_segment_interest(self, start_date, end_date, principal, user_rate, use_lpr, multiplier):
         """
@@ -999,52 +1080,49 @@ class InterestCalculatorApp:
         use_lpr = self.use_lpr_var.get()
         multiplier = float(self.lpr_multiplier_var.get()) if self.lpr_multiplier_var.get() else 4
 
-        # 获取有效还款记录并排序
-        valid_repayments = []
+        # 获取有效事件记录并排序
+        valid_events = []
         for row in self.repayment_rows:
             if row['date'] and row['amount'] > 0:
-                valid_repayments.append(row)
-        valid_repayments.sort(key=lambda x: x['date'])
+                valid_events.append(row)
+        valid_events.sort(key=lambda x: x['date'])
 
-        # 计算每笔还款
+        # 计算每笔事件
         current_principal = principal
         current_date = start_date
-        total_interest_due = 0
-        total_interest_paid = 0
-        total_principal_paid = 0
+        brought_forward_arrears = 0
 
-        for row in valid_repayments:
-            repayment_date = row['date']
-            repayment_amount = row['amount']
+        for row in valid_events:
+            event_date = row['date']
+            event_amount = row['amount']
 
-            # 计算应还利息（从上次日期到本次日期）
+            # 计算应还利息（从上次日期到本次日期，基于当前剩余本金）
             interest_due = self.calculate_segment_interest(
-                current_date, repayment_date, current_principal, user_rate, use_lpr, multiplier
+                current_date, event_date, current_principal, user_rate, use_lpr, multiplier
             )
+            total_interest_due = interest_due + brought_forward_arrears
 
-            # 实还利息
-            interest_paid = min(repayment_amount, interest_due)
+            if row.get('type') == 'borrow':
+                # 借款：利息全部挂账，本金增加
+                row['interest_due'] = interest_due
+                row['interest_paid'] = 0
+                row['current_arrears'] = total_interest_due
+                row['remaining_principal'] = current_principal + event_amount
+            else:
+                # 还款：先息后本
+                interest_paid = min(event_amount, total_interest_due)
+                principal_paid = event_amount - interest_paid
+                current_arrears = total_interest_due - interest_paid
+                remaining_principal = current_principal - principal_paid
 
-            # 实还本金
-            principal_paid = repayment_amount - interest_paid
+                row['interest_due'] = interest_due
+                row['interest_paid'] = interest_paid
+                row['current_arrears'] = current_arrears
+                row['remaining_principal'] = remaining_principal
 
-            # 当期欠息
-            current_arrears = interest_due - interest_paid
-
-            # 更新剩余本金
-            current_principal = current_principal - principal_paid
-
-            # 记录
-            row['interest_due'] = interest_due
-            row['interest_paid'] = interest_paid
-            row['current_arrears'] = current_arrears
-            row['remaining_principal'] = current_principal
-
-            total_interest_due += interest_due
-            total_interest_paid += interest_paid
-            total_principal_paid += principal_paid
-
-            current_date = repayment_date
+            current_date = event_date
+            current_principal = row['remaining_principal']
+            brought_forward_arrears = row['current_arrears']
 
         # 更新treeview显示（包括汇总）
         self.refresh_treeview()
