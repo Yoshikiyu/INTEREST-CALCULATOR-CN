@@ -152,6 +152,37 @@ def decimal_to_excel_number(value):
     return float(to_decimal(value, Decimal("0")).quantize(MONEY_PLACES, rounding=ROUND_HALF_UP))
 
 
+def normalize_year_days(value):
+    text = str(value).strip().replace("天", "")
+    year_days = to_decimal(text)
+    if year_days not in (Decimal("360"), Decimal("365")):
+        raise ValueError("year days must be 360 or 365")
+    return year_days
+
+
+def calculate_user_annual_rate(annual_rate_text, monthly_rate_text, daily_rate_text, year_days):
+    year_days = normalize_year_days(year_days)
+    annual_rate = to_decimal(annual_rate_text, Decimal("0")) / Decimal("100")
+    monthly_rate = to_decimal(monthly_rate_text, Decimal("0")) / Decimal("100")
+    daily_rate = to_decimal(daily_rate_text, Decimal("0")) / Decimal("100")
+    return max(annual_rate, monthly_rate * Decimal("12"), daily_rate * year_days)
+
+
+def extract_current_interest_calculation(detail):
+    lines = str(detail or "").splitlines()
+    try:
+        start_index = next(i for i, line in enumerate(lines) if line.strip() == "本期利息计算:")
+    except StopIteration:
+        return ""
+
+    section = []
+    for line in lines[start_index:]:
+        if section and not line.strip():
+            break
+        section.append(line)
+    return "\n".join(section)
+
+
 def get_app_data_dir():
     """优先使用用户目录，避免安装目录不可写。"""
     local_app_data = os.environ.get("LOCALAPPDATA")
@@ -446,13 +477,11 @@ def sort_lpr_data(lpr_data):
     if not lpr_data:
         return []
     return sorted(lpr_data, key=lambda item: item.get('date', ''))
-
-
 class InterestCalculatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("利息计算器")
-        self.root.geometry("900x700")
+        self.root.geometry("1080x700")
         self.root.resizable(True, True)
 
         # LPR数据
@@ -466,6 +495,8 @@ class InterestCalculatorApp:
         self.principal_var = tk.StringVar()
         self.annual_rate_var = tk.StringVar()
         self.monthly_rate_var = tk.StringVar()
+        self.daily_rate_var = tk.StringVar()
+        self.year_days_var = tk.StringVar(value="360天")
         self.use_lpr_var = tk.BooleanVar()
         self.lpr_multiplier_var = tk.StringVar(value="4")
 
@@ -477,6 +508,18 @@ class InterestCalculatorApp:
         self.style.configure('Title.TLabel', font=('Arial', 12, 'bold'))
         self.style.configure('Result.TLabel', font=('Arial', 11))
         self.style.configure('Input.TEntry', font=('Arial', 11))
+
+    def get_rate_settings(self):
+        """读取并折算界面上的利率设置。"""
+        year_days = normalize_year_days(self.year_days_var.get())
+        user_rate = calculate_user_annual_rate(
+            self.annual_rate_var.get(),
+            self.monthly_rate_var.get(),
+            self.daily_rate_var.get(),
+            year_days
+        )
+        multiplier = to_decimal(self.lpr_multiplier_var.get(), Decimal("4"))
+        return user_rate, year_days, multiplier
 
     def load_or_fetch_lpr_data(self):
         """加载或获取LPR数据"""
@@ -522,7 +565,6 @@ class InterestCalculatorApp:
                 return token
             messagebox.showerror("错误", "Token 保存失败，请检查用户目录写入权限。")
         return None
-
     def create_widgets(self):
         """创建所有界面组件"""
         main_frame = ttk.Frame(self.root, padding="10")
@@ -573,7 +615,21 @@ class InterestCalculatorApp:
 
         ttk.Label(row1, text="月利率(%):").pack(side=tk.LEFT, padx=(0, 5))
         self.monthly_rate_entry = ttk.Entry(row1, textvariable=self.monthly_rate_var, width=10, style='Input.TEntry')
-        self.monthly_rate_entry.pack(side=tk.LEFT)
+        self.monthly_rate_entry.pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Label(row1, text="日利率(%):").pack(side=tk.LEFT, padx=(0, 5))
+        self.daily_rate_entry = ttk.Entry(row1, textvariable=self.daily_rate_var, width=10, style='Input.TEntry')
+        self.daily_rate_entry.pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Label(row1, text="计息年天数:").pack(side=tk.LEFT, padx=(0, 5))
+        self.year_days_combo = ttk.Combobox(
+            row1,
+            textvariable=self.year_days_var,
+            values=("360天", "365天"),
+            width=6,
+            state="readonly"
+        )
+        self.year_days_combo.pack(side=tk.LEFT)
 
         row2 = ttk.Frame(frame)
         row2.pack(fill=tk.X)
@@ -621,7 +677,7 @@ class InterestCalculatorApp:
         frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # 创建表格
-        columns = ('序号', '日期', '类型', '金额', '应还利息', '实还利息', '当期欠息', '当期剩余本金')
+        columns = ('序号', '日期', '类型', '金额', '每期天数', '应付利息', '实付利息', '当期欠息', '当期剩余本金')
         self.repayment_tree = ttk.Treeview(frame, columns=columns, show='headings', height=8)
 
         # 设置列宽
@@ -629,8 +685,9 @@ class InterestCalculatorApp:
         self.repayment_tree.heading('日期', text='日期')
         self.repayment_tree.heading('类型', text='类型')
         self.repayment_tree.heading('金额', text='金额')
-        self.repayment_tree.heading('应还利息', text='应还利息')
-        self.repayment_tree.heading('实还利息', text='实还利息')
+        self.repayment_tree.heading('每期天数', text='每期天数')
+        self.repayment_tree.heading('应付利息', text='应付利息')
+        self.repayment_tree.heading('实付利息', text='实付利息')
         self.repayment_tree.heading('当期欠息', text='当期欠息')
         self.repayment_tree.heading('当期剩余本金', text='当期剩余本金')
 
@@ -638,8 +695,9 @@ class InterestCalculatorApp:
         self.repayment_tree.column('日期', width=110, anchor='center')
         self.repayment_tree.column('类型', width=50, anchor='center')
         self.repayment_tree.column('金额', width=100, anchor='e')
-        self.repayment_tree.column('应还利息', width=100, anchor='e')
-        self.repayment_tree.column('实还利息', width=100, anchor='e')
+        self.repayment_tree.column('每期天数', width=80, anchor='center')
+        self.repayment_tree.column('应付利息', width=100, anchor='e')
+        self.repayment_tree.column('实付利息', width=100, anchor='e')
         self.repayment_tree.column('当期欠息', width=100, anchor='e')
         self.repayment_tree.column('当期剩余本金', width=120, anchor='e')
 
@@ -730,6 +788,7 @@ class InterestCalculatorApp:
                     'date': repayment_date,
                     'type': 'repay',
                     'amount': amount,
+                    'period_days': 0,
                     'interest_due': 0,
                     'interest_paid': 0,
                     'current_arrears': 0,
@@ -803,6 +862,7 @@ class InterestCalculatorApp:
                     'date': borrow_date,
                     'type': 'borrow',
                     'amount': amount,
+                    'period_days': 0,
                     'interest_due': 0,
                     'interest_paid': 0,
                     'current_arrears': 0,
@@ -967,14 +1027,11 @@ class InterestCalculatorApp:
 
         start_date = self.start_date_entry.get_date()
         try:
-            annual_rate = to_decimal(self.annual_rate_var.get(), Decimal("0")) / Decimal("100")
-            monthly_rate = to_decimal(self.monthly_rate_var.get(), Decimal("0")) / Decimal("100")
-            multiplier = to_decimal(self.lpr_multiplier_var.get(), Decimal("4"))
+            user_rate, year_days, multiplier = self.get_rate_settings()
         except ValueError:
-            annual_rate = Decimal("0")
-            monthly_rate = Decimal("0")
+            user_rate = Decimal("0")
+            year_days = YEAR_DAYS
             multiplier = Decimal("4")
-        user_rate = max(annual_rate, monthly_rate * 12)
         use_lpr = self.use_lpr_var.get()
 
         prev_date = start_date
@@ -982,9 +1039,10 @@ class InterestCalculatorApp:
         brought_forward_arrears = Decimal("0")
 
         for row in self.repayment_rows:
-            # 计算本期应还利息（按当前剩余本金、上期日期到本期日期）
+            row['period_days'] = days_between(prev_date, row['date'])
+            # 计算本期应付利息（按当前剩余本金、上期日期到本期日期）
             interest_due, segments = self.calculate_segment_interest(
-                prev_date, row['date'], prev_remaining, user_rate, use_lpr, multiplier, include_details=True
+                prev_date, row['date'], prev_remaining, user_rate, use_lpr, multiplier, year_days, include_details=True
             )
             total_interest_due = interest_due + brought_forward_arrears
 
@@ -996,7 +1054,7 @@ class InterestCalculatorApp:
                 row['remaining_principal'] = prev_remaining + row['amount']
                 row['calculation_detail'] = self.build_calculation_detail(
                     row, prev_date, prev_remaining, brought_forward_arrears, segments,
-                    total_interest_due, Decimal("0"), Decimal("0"), row['remaining_principal']
+                    total_interest_due, Decimal("0"), Decimal("0"), row['remaining_principal'], year_days
                 )
             else:
                 # 还款：先息后本
@@ -1011,7 +1069,7 @@ class InterestCalculatorApp:
                 row['remaining_principal'] = remaining_principal
                 row['calculation_detail'] = self.build_calculation_detail(
                     row, prev_date, prev_remaining, brought_forward_arrears, segments,
-                    total_interest_due, interest_paid, principal_paid, remaining_principal
+                    total_interest_due, interest_paid, principal_paid, remaining_principal, year_days
                 )
 
             prev_date = row['date']
@@ -1035,6 +1093,7 @@ class InterestCalculatorApp:
                 row['date'].strftime('%Y-%m-%d') if row['date'] else '',
                 type_text,
                 money_text(row['amount']) if row['amount'] else '',
+                row.get('period_days', 0),
                 money_text(row['interest_due']),
                 money_text(row['interest_paid']),
                 money_text(row['current_arrears']),
@@ -1068,7 +1127,7 @@ class InterestCalculatorApp:
 
     def build_calculation_detail(self, row, prev_date, prev_principal, brought_forward_arrears,
                                  segments, total_interest_due, interest_paid,
-                                 principal_paid, remaining_principal):
+                                 principal_paid, remaining_principal, year_days):
         """生成供人工复验的单条流水计算过程。"""
         type_text = "借款" if row.get('type') == 'borrow' else "还款"
         lines = [
@@ -1088,7 +1147,7 @@ class InterestCalculatorApp:
             for segment in segments:
                 formula = (
                     f"{money_text(segment['principal'])} × {percent_text(segment['rate'])}% "
-                    f"÷ 360 × {segment['days']}天 = {money_text(segment['interest'])}"
+                    f"÷ {format(year_days, 'f')} × {segment['days']}天 = {money_text(segment['interest'])}"
                 )
                 lines.extend([
                     f"{segment['start'].strftime('%Y-%m-%d')} 至 {segment['end'].strftime('%Y-%m-%d')}:",
@@ -1099,8 +1158,8 @@ class InterestCalculatorApp:
         current_interest = total_interest_due - brought_forward_arrears
         lines.extend([
             "",
-            f"本期新增应还利息: {money_text(current_interest)}",
-            f"本期应处理利息合计: {money_text(current_interest)} + {money_text(brought_forward_arrears)} = {money_text(total_interest_due)}",
+            f"本期新增应付利息: {money_text(current_interest)}",
+            f"本期应付利息合计: {money_text(current_interest)} + {money_text(brought_forward_arrears)} = {money_text(total_interest_due)}",
         ])
 
         if row.get('type') == 'borrow':
@@ -1113,7 +1172,7 @@ class InterestCalculatorApp:
             excess_paid = row['amount'] - interest_paid - principal_paid
             lines.extend([
                 "本条为还款，按先息后本处理。",
-                f"实还利息: min({money_text(row['amount'])}, {money_text(total_interest_due)}) = {money_text(interest_paid)}",
+                f"实付利息: min({money_text(row['amount'])}, {money_text(total_interest_due)}) = {money_text(interest_paid)}",
                 f"冲抵本金: min({money_text(row['amount'])} - {money_text(interest_paid)}, {money_text(prev_principal)}) = {money_text(principal_paid)}",
                 f"剩余本金: {money_text(prev_principal)} - {money_text(principal_paid)} = {money_text(remaining_principal)}",
                 f"结转欠息: {money_text(total_interest_due)} - {money_text(interest_paid)} = {money_text(row['current_arrears'])}",
@@ -1197,13 +1256,17 @@ class InterestCalculatorApp:
             ws['B2'] = float(to_decimal(self.annual_rate_var.get(), Decimal("0")))
             ws['C2'] = '月利率(%)'
             ws['D2'] = float(to_decimal(self.monthly_rate_var.get(), Decimal("0")))
-            ws['E2'] = '使用LPR'
-            ws['F2'] = '是' if self.use_lpr_var.get() else '否'
-            ws['G2'] = '倍数'
-            ws['H2'] = float(to_decimal(self.lpr_multiplier_var.get(), Decimal("4")))
+            ws['E2'] = '日利率(%)'
+            ws['F2'] = float(to_decimal(self.daily_rate_var.get(), Decimal("0")))
+            ws['G2'] = '计息年天数'
+            ws['H2'] = int(normalize_year_days(self.year_days_var.get()))
+            ws['I2'] = '使用LPR'
+            ws['J2'] = '是' if self.use_lpr_var.get() else '否'
+            ws['K2'] = '倍数'
+            ws['L2'] = float(to_decimal(self.lpr_multiplier_var.get(), Decimal("4")))
 
             # 明细表标题行
-            headers = ['序号', '日期', '类型', '金额', '应还利息', '实还利息', '当期欠息', '当期剩余本金', '计算过程']
+            headers = ['序号', '日期', '类型', '金额', '每期天数', '应付利息', '实付利息', '当期欠息', '当期剩余本金', '本期利息计算']
             header_row = 4
             for col, header in enumerate(headers, start=1):
                 cell = ws.cell(row=header_row, column=col, value=header)
@@ -1225,30 +1288,36 @@ class InterestCalculatorApp:
                 ws.cell(row=row_idx, column=4, value=decimal_to_excel_number(row_data['amount'])).border = thin_border
                 ws.cell(row=row_idx, column=4).alignment = right_align
                 ws.cell(row=row_idx, column=4).number_format = '0.00'
-                ws.cell(row=row_idx, column=5, value=decimal_to_excel_number(row_data['interest_due'])).border = thin_border
-                ws.cell(row=row_idx, column=5).alignment = right_align
-                ws.cell(row=row_idx, column=5).number_format = '0.00'
-                ws.cell(row=row_idx, column=6, value=decimal_to_excel_number(row_data['interest_paid'])).border = thin_border
+                ws.cell(row=row_idx, column=5, value=row_data.get('period_days', 0)).border = thin_border
+                ws.cell(row=row_idx, column=5).alignment = center_align
+                ws.cell(row=row_idx, column=6, value=decimal_to_excel_number(row_data['interest_due'])).border = thin_border
                 ws.cell(row=row_idx, column=6).alignment = right_align
                 ws.cell(row=row_idx, column=6).number_format = '0.00'
-                ws.cell(row=row_idx, column=7, value=decimal_to_excel_number(row_data['current_arrears'])).border = thin_border
+                ws.cell(row=row_idx, column=7, value=decimal_to_excel_number(row_data['interest_paid'])).border = thin_border
                 ws.cell(row=row_idx, column=7).alignment = right_align
                 ws.cell(row=row_idx, column=7).number_format = '0.00'
-                ws.cell(row=row_idx, column=8, value=decimal_to_excel_number(row_data['remaining_principal'])).border = thin_border
+                ws.cell(row=row_idx, column=8, value=decimal_to_excel_number(row_data['current_arrears'])).border = thin_border
                 ws.cell(row=row_idx, column=8).alignment = right_align
                 ws.cell(row=row_idx, column=8).number_format = '0.00'
-                ws.cell(row=row_idx, column=9, value=row_data.get('calculation_detail', '')).border = thin_border
-                ws.cell(row=row_idx, column=9).alignment = Alignment(wrap_text=True, vertical='top')
+                ws.cell(row=row_idx, column=9, value=decimal_to_excel_number(row_data['remaining_principal'])).border = thin_border
+                ws.cell(row=row_idx, column=9).alignment = right_align
+                ws.cell(row=row_idx, column=9).number_format = '0.00'
+                ws.cell(
+                    row=row_idx,
+                    column=10,
+                    value=extract_current_interest_calculation(row_data.get('calculation_detail', ''))
+                ).border = thin_border
+                ws.cell(row=row_idx, column=10).alignment = Alignment(wrap_text=True, vertical='top')
 
             # 汇总行
             summary_row = header_row + len(self.repayment_rows) + 1
             ws.cell(row=summary_row, column=1, value='汇总').font = header_font
             ws.cell(row=summary_row, column=4, value=decimal_to_excel_number(self.remaining_principal_label.cget("text"))).font = header_font
             ws.cell(row=summary_row, column=4).number_format = '0.00'
-            ws.cell(row=summary_row, column=7, value=decimal_to_excel_number(self.arrears_interest_label.cget("text"))).font = header_font
-            ws.cell(row=summary_row, column=7).number_format = '0.00'
-            ws.cell(row=summary_row, column=8, value=decimal_to_excel_number(self.total_arrears_label.cget("text"))).font = header_font
+            ws.cell(row=summary_row, column=8, value=decimal_to_excel_number(self.arrears_interest_label.cget("text"))).font = header_font
             ws.cell(row=summary_row, column=8).number_format = '0.00'
+            ws.cell(row=summary_row, column=9, value=decimal_to_excel_number(self.total_arrears_label.cget("text"))).font = header_font
+            ws.cell(row=summary_row, column=9).number_format = '0.00'
 
             # 设置列宽
             ws.column_dimensions['A'].width = 8
@@ -1259,7 +1328,8 @@ class InterestCalculatorApp:
             ws.column_dimensions['F'].width = 12
             ws.column_dimensions['G'].width = 12
             ws.column_dimensions['H'].width = 15
-            ws.column_dimensions['I'].width = 70
+            ws.column_dimensions['I'].width = 15
+            ws.column_dimensions['J'].width = 70
 
             wb.save(file_path)
             messagebox.showinfo("成功", f"已导出到:\n{file_path}")
@@ -1290,9 +1360,7 @@ class InterestCalculatorApp:
             return False
 
         try:
-            annual_rate = to_decimal(self.annual_rate_var.get(), Decimal("0")) / Decimal("100")
-            monthly_rate = to_decimal(self.monthly_rate_var.get(), Decimal("0")) / Decimal("100")
-            user_rate = max(annual_rate, monthly_rate * 12)
+            user_rate, _, _ = self.get_rate_settings()
             if user_rate <= 0:
                 messagebox.showerror("输入错误", "请输入有效的利率")
                 return False
@@ -1318,7 +1386,6 @@ class InterestCalculatorApp:
                     messagebox.showerror("输入错误", "流水日期不能早于起始日期")
                     return False
                 valid_events.append(row)
-
         if not valid_events:
             messagebox.showerror("输入错误", "请至少添加一笔借款或还款记录")
             return False
@@ -1328,7 +1395,7 @@ class InterestCalculatorApp:
 
         return True
 
-    def calculate_segment_interest(self, start_date, end_date, principal, user_rate, use_lpr, multiplier, include_details=False):
+    def calculate_segment_interest(self, start_date, end_date, principal, user_rate, use_lpr, multiplier, year_days, include_details=False):
         """
         计算一段时间的利息（考虑分段）
         """
@@ -1369,7 +1436,7 @@ class InterestCalculatorApp:
             rate = rate_info["rate"]
 
             # 计算利息
-            segment_interest = remaining * (rate / YEAR_DAYS) * Decimal(days)
+            segment_interest = remaining * (rate / year_days) * Decimal(days)
             total_interest += segment_interest
             detail_segments.append({
                 "start": segment_start,
@@ -1392,11 +1459,8 @@ class InterestCalculatorApp:
 
         principal = to_decimal(self.principal_var.get())
         start_date = self.start_date_entry.get_date()
-        annual_rate = to_decimal(self.annual_rate_var.get(), Decimal("0")) / Decimal("100")
-        monthly_rate = to_decimal(self.monthly_rate_var.get(), Decimal("0")) / Decimal("100")
-        user_rate = max(annual_rate, monthly_rate * 12)
+        user_rate, year_days, multiplier = self.get_rate_settings()
         use_lpr = self.use_lpr_var.get()
-        multiplier = to_decimal(self.lpr_multiplier_var.get(), Decimal("4"))
 
         # 获取有效事件记录并排序
         valid_events = []
@@ -1413,10 +1477,11 @@ class InterestCalculatorApp:
         for row in valid_events:
             event_date = row['date']
             event_amount = row['amount']
+            row['period_days'] = days_between(current_date, event_date)
 
-            # 计算应还利息（从上次日期到本次日期，基于当前剩余本金）
+            # 计算应付利息（从上次日期到本次日期，基于当前剩余本金）
             interest_due, segments = self.calculate_segment_interest(
-                current_date, event_date, current_principal, user_rate, use_lpr, multiplier, include_details=True
+                current_date, event_date, current_principal, user_rate, use_lpr, multiplier, year_days, include_details=True
             )
             total_interest_due = interest_due + brought_forward_arrears
 
@@ -1428,7 +1493,7 @@ class InterestCalculatorApp:
                 row['remaining_principal'] = current_principal + event_amount
                 row['calculation_detail'] = self.build_calculation_detail(
                     row, current_date, current_principal, brought_forward_arrears, segments,
-                    total_interest_due, Decimal("0"), Decimal("0"), row['remaining_principal']
+                    total_interest_due, Decimal("0"), Decimal("0"), row['remaining_principal'], year_days
                 )
             else:
                 # 还款：先息后本
@@ -1443,7 +1508,7 @@ class InterestCalculatorApp:
                 row['remaining_principal'] = remaining_principal
                 row['calculation_detail'] = self.build_calculation_detail(
                     row, current_date, current_principal, brought_forward_arrears, segments,
-                    total_interest_due, interest_paid, principal_paid, remaining_principal
+                    total_interest_due, interest_paid, principal_paid, remaining_principal, year_days
                 )
 
             current_date = event_date
